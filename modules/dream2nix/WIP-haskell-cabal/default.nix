@@ -47,6 +47,11 @@
   vendorGitPackage = p: ''
     echo "Vendoring git ${p.name}-${p.version}"
     cp --no-preserve=all -r ${config.deps.fetchzip {inherit (p.src) url hash;}} $VENDOR_DIR/${p.name}
+    # Strip source-repository stanzas so cabal treats this as a plain local package
+    # and does not try to look up or fetch the VCS source
+    awk '/^source-repository/{skip=1;next} /^[^ \t]/{skip=0} !skip' \
+      $VENDOR_DIR/${p.name}/${p.name}.cabal > $VENDOR_DIR/${p.name}/${p.name}.cabal.tmp
+    mv $VENDOR_DIR/${p.name}/${p.name}.cabal.tmp $VENDOR_DIR/${p.name}/${p.name}.cabal
   '';
 
   vendorGitPackages =
@@ -86,6 +91,10 @@ in {
           echo "optional-packages: $VENDOR_DIR/*/*.cabal"
         } > cabal.project
       else
+        # Strip source-repository-package stanzas — those packages are vendored locally
+        awk '/^source-repository-package/{skip=1;next} /^[^ \t]/{skip=0} !skip' \
+          cabal.project > cabal.project.tmp
+        mv cabal.project.tmp cabal.project
         echo "optional-packages: $VENDOR_DIR/*/*.cabal" >> cabal.project
       fi
 
