@@ -149,6 +149,7 @@ in {
         coreutils
         bash
         gawk
+        git
         writeScript
         writeScriptBin
         path
