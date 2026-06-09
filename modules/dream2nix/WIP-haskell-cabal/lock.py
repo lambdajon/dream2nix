@@ -14,22 +14,7 @@ import subprocess
 import sys
 
 with open("./dist-newstyle/cache/plan.json") as f:
-    plan = f.read()
-
-plan = json.loads(plan)
-
-pkgs = list(
-    filter(
-        (
-            lambda pkg: pkg.get("pkg-src") is not None
-            and pkg["pkg-src"]["type"] == "repo-tar"
-        ),
-        plan["install-plan"],
-    )
-)
-pkg_len = len(pkgs)
-
-lock = {}
+    plan = json.load(f)
 
 
 def to_sri(h):
@@ -41,22 +26,42 @@ def to_sri(h):
     ).stdout.strip()
 
 
-for i, pkg in enumerate(pkgs):
-    name = pkg["pkg-name"]
-    id = pkg["id"]
-    version = pkg["pkg-version"]
+def prefetch_unpack(url):
+    raw = subprocess.run(
+        ["nix-prefetch-url", "--unpack", "--type", "sha256", url],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return to_sri(raw)
 
-    print(f"[{i+1}/{pkg_len}] Resolving revision for {name}-{version}")
+
+hackage = {}
+git = {}
+
+install_plan = plan["install-plan"]
+
+hackage_pkgs = [
+    pkg for pkg in install_plan if pkg.get("pkg-src", {}).get("type") == "repo-tar"
+]
+git_pkgs = [
+    pkg for pkg in install_plan if pkg.get("pkg-src", {}).get("type") == "source-repo"
+]
+
+for i, pkg in enumerate(hackage_pkgs):
+    name = pkg["pkg-name"]
+    version = pkg["pkg-version"]
+    id = pkg["id"]
+
+    print(f"[hackage {i+1}/{len(hackage_pkgs)}] Resolving {name}-{version}")
 
     revisions = requests.get(
         f"https://hackage.haskell.org/package/{name}-{version}/revisions/",
         headers={"Accept": "application/json"},
     ).json()
 
-    url = pkg["pkg-src"]["repo"]["uri"]
-    url = urljoin(url, "package/")
-    url = urljoin(url, f"{name}/")
-    url = urljoin(url, f"{name}-{version}.tar.gz")
+    base_url = pkg["pkg-src"]["repo"]["uri"]
+    src_url = urljoin(base_url, f"package/{name}/{name}-{version}.tar.gz")
 
     for rev in revisions:
         no = rev["number"]
@@ -67,16 +72,7 @@ for i, pkg in enumerate(pkgs):
         rev_hash = sha256(rev_cabal.encode("utf-8")).hexdigest()
 
         if rev_hash == pkg["pkg-cabal-sha256"]:
-            # Cabal gives hash before unpack, so we need to prefetch the source
-            src_hash = subprocess.run(
-                ["nix-prefetch-url", "--unpack", "--type", "sha256", url],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-            src_hash = to_sri(src_hash)
-
-            lock[id] = {
+            hackage[id] = {
                 "name": name,
                 "version": version,
                 "cabal": {
@@ -84,14 +80,38 @@ for i, pkg in enumerate(pkgs):
                     "hash": to_sri(rev_hash),
                 },
                 "src": {
-                    "url": url,
-                    "hash": src_hash,
+                    "url": src_url,
+                    "hash": prefetch_unpack(src_url),
                 },
             }
             break
     else:
-        print(f"Could not find revision for {name}-{version}")
+        print(f"Could not find revision for {name}-{version}", file=sys.stderr)
         sys.exit(1)
 
-with open(os.environ.get("out"), "w") as f:
-    json.dump(lock, f, indent=2)
+for i, pkg in enumerate(git_pkgs):
+    name = pkg["pkg-name"]
+    version = pkg["pkg-version"]
+    id = pkg["id"]
+    repo = pkg["pkg-src"]["source-repo"]
+    location = repo["location"]
+    tag = repo["tag"]
+
+    print(f"[git {i+1}/{len(git_pkgs)}] Fetching {name}-{version} @ {tag[:12]}")
+
+    repo_base = location.rstrip("/").removesuffix(".git")
+    archive_url = f"{repo_base}/archive/{tag}.tar.gz"
+
+    git[id] = {
+        "name": name,
+        "version": version,
+        "location": location,
+        "tag": tag,
+        "src": {
+            "url": archive_url,
+            "hash": prefetch_unpack(archive_url),
+        },
+    }
+
+with open(os.environ["out"], "w") as f:
+    json.dump({"hackage": hackage, "git": git}, f, indent=2)
