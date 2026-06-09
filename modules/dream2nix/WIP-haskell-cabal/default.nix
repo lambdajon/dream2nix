@@ -17,6 +17,7 @@
       bash
       coreutils
       gawk
+      git
       writeScript
       writeScriptBin
       path
@@ -126,6 +127,7 @@ in {
       config.deps.haskell-compiler
       config.deps.coreutils
       config.deps.nix
+      config.deps.git
       (config.deps.python3.withPackages (ps: with ps; [requests]))
     ] ''
       cd $TMPDIR
