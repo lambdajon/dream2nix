@@ -116,6 +116,7 @@ in {
       touch .cabal/config
 
       HOME=$(pwd) cabal install         \
+                  --offline             \
                   --installdir $out/bin \
                   --install-method copy \
                   -j
